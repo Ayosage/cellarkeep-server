@@ -7,6 +7,7 @@ package gen
 
 import (
 	"context"
+	"time"
 
 	"github.com/google/uuid"
 )
@@ -99,6 +100,69 @@ func (q *Queries) ListVessels(ctx context.Context) ([]Vessel, error) {
 			&i.CapacityL,
 			&i.Notes,
 			&i.CreatedAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const listVesselsWithOccupant = `-- name: ListVesselsWithOccupant :many
+select v.id, v.name, v.kind, v.capacity_l, v.notes, v.created_at, b.id as batch_id, b.name as batch_name, b.beverage as batch_beverage,
+  b.volume_l as batch_volume_l, b.start_date as batch_start_date,
+  r.completed_date as racked_in
+from vessels v
+left join batches b on b.current_vessel_id = v.id and b.status in ('fermenting','conditioning')
+left join lateral (
+  select e.completed_date from batch_events e
+  where e.batch_id = b.id and e.type = 'racking' and e.status = 'done' and e.vessel_to_id = v.id
+  order by e.completed_date desc nulls last
+  limit 1
+) r on true
+order by v.created_at, v.name
+`
+
+type ListVesselsWithOccupantRow struct {
+	ID             uuid.UUID        `json:"id"`
+	Name           string           `json:"name"`
+	Kind           VesselKind       `json:"kind"`
+	CapacityL      float32          `json:"capacity_l"`
+	Notes          *string          `json:"notes"`
+	CreatedAt      time.Time        `json:"created_at"`
+	BatchID        *uuid.UUID       `json:"batch_id"`
+	BatchName      *string          `json:"batch_name"`
+	BatchBeverage  NullBeverageType `json:"batch_beverage"`
+	BatchVolumeL   *float32         `json:"batch_volume_l"`
+	BatchStartDate *time.Time       `json:"batch_start_date"`
+	RackedIn       *time.Time       `json:"racked_in"`
+}
+
+func (q *Queries) ListVesselsWithOccupant(ctx context.Context) ([]ListVesselsWithOccupantRow, error) {
+	rows, err := q.db.Query(ctx, listVesselsWithOccupant)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []ListVesselsWithOccupantRow
+	for rows.Next() {
+		var i ListVesselsWithOccupantRow
+		if err := rows.Scan(
+			&i.ID,
+			&i.Name,
+			&i.Kind,
+			&i.CapacityL,
+			&i.Notes,
+			&i.CreatedAt,
+			&i.BatchID,
+			&i.BatchName,
+			&i.BatchBeverage,
+			&i.BatchVolumeL,
+			&i.BatchStartDate,
+			&i.RackedIn,
 		); err != nil {
 			return nil, err
 		}

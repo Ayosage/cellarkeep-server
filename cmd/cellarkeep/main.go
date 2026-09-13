@@ -16,6 +16,7 @@ import (
 	"github.com/ayosage/cellarkeep-server/internal/api"
 	"github.com/ayosage/cellarkeep-server/internal/config"
 	"github.com/ayosage/cellarkeep-server/internal/migrations"
+	"github.com/ayosage/cellarkeep-server/internal/store"
 )
 
 func main() {
@@ -58,7 +59,7 @@ func serve(log *slog.Logger) error {
 	log.Info("migrated")
 	srv := &http.Server{
 		Addr:              cfg.Addr,
-		Handler:           api.NewRouter(api.Deps{DB: pool}),
+		Handler:           api.NewRouter(api.Deps{DB: pool, Store: store.New(pool), Cfg: cfg, Log: log}),
 		ReadHeaderTimeout: 5 * time.Second,
 		ReadTimeout:       15 * time.Second,
 		WriteTimeout:      30 * time.Second,

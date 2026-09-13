@@ -1,0 +1,303 @@
+openapi: 3.1.0
+info:
+  title: CellarKeep API
+  version: 1.0.0
+  description: Production tracker for hobbyist wine, mead, and cider makers.
+servers:
+  - url: /api/v1
+security:
+  - session: []
+components:
+  securitySchemes:
+    session:
+      type: apiKey
+      in: cookie
+      name: ck_session
+    device:
+      type: http
+      scheme: bearer
+  schemas:
+    Problem:
+      type: object
+      required: [type, title, status]
+      properties:
+        type: { type: string }
+        title: { type: string }
+        status: { type: integer }
+        detail: { type: string }
+    User:
+      type: object
+      required: [id, email, name, role, createdAt]
+      properties:
+        id: { type: string, format: uuid }
+        email: { type: string }
+        name: { type: string }
+        role: { type: string, enum: [admin, member] }
+        createdAt: { type: string, format: date-time }
+    Credentials:
+      type: object
+      required: [email, password]
+      properties:
+        email: { type: string }
+        password: { type: string }
+    SetupRequest:
+      type: object
+      required: [email, name, password]
+      properties:
+        email: { type: string }
+        name: { type: string, minLength: 1 }
+        password: { type: string, minLength: 10 }
+    RegisterRequest:
+      allOf:
+        - $ref: '#/components/schemas/SetupRequest'
+        - type: object
+          required: [inviteToken]
+          properties:
+            inviteToken: { type: string }
+    ChangePasswordRequest:
+      type: object
+      required: [currentPassword, newPassword]
+      properties:
+        currentPassword: { type: string }
+        newPassword: { type: string, minLength: 10 }
+    Invite:
+      type: object
+      required: [id, token, createdBy, createdByName, createdAt, expiresAt]
+      properties:
+        id: { type: string, format: uuid }
+        token: { type: string }
+        email: { type: string }
+        createdBy: { type: string, format: uuid }
+        createdByName: { type: string }
+        createdAt: { type: string, format: date-time }
+        expiresAt: { type: string, format: date-time }
+        usedAt: { type: string, format: date-time }
+        usedByName: { type: string }
+        revokedAt: { type: string, format: date-time }
+    InviteCreate:
+      type: object
+      properties:
+        email: { type: string }
+    InvitePreview:
+      type: object
+      required: [valid]
+      properties:
+        valid: { type: boolean }
+        email: { type: string }
+    VesselKind:
+      type: string
+      enum: [carboy, bucket, barrel, tank, keg, other]
+    Beverage:
+      type: string
+      enum: [wine, mead, cider]
+    VesselInput:
+      type: object
+      required: [name, kind, capacityL]
+      properties:
+        name: { type: string, minLength: 1 }
+        kind: { $ref: '#/components/schemas/VesselKind' }
+        capacityL: { type: number, exclusiveMinimum: 0 }
+        notes: { type: string }
+    Occupant:
+      type: object
+      required: [batchId, batchName, beverage, volumeL, since]
+      properties:
+        batchId: { type: string, format: uuid }
+        batchName: { type: string }
+        beverage: { $ref: '#/components/schemas/Beverage' }
+        volumeL: { type: number }
+        since: { type: string, format: date }
+    Vessel:
+      allOf:
+        - $ref: '#/components/schemas/VesselInput'
+        - type: object
+          required: [id, createdAt]
+          properties:
+            id: { type: string, format: uuid }
+            createdAt: { type: string, format: date-time }
+            occupant: { $ref: '#/components/schemas/Occupant' }
+    IngredientCategory:
+      type: string
+      enum: [fermentable, fruit, yeast, nutrient, chemical, other]
+    IngredientInput:
+      type: object
+      required: [name, category, unit]
+      properties:
+        name: { type: string, minLength: 1 }
+        category: { $ref: '#/components/schemas/IngredientCategory' }
+        unit: { type: string, minLength: 1 }
+    Ingredient:
+      allOf:
+        - $ref: '#/components/schemas/IngredientInput'
+        - type: object
+          required: [id]
+          properties:
+            id: { type: string, format: uuid }
+    InventoryRow:
+      type: object
+      required: [ingredient, stock]
+      properties:
+        ingredient: { $ref: '#/components/schemas/Ingredient' }
+        stock: { type: number }
+        costPerUnit: { type: number }
+    StockAdjust:
+      type: object
+      required: [delta]
+      properties:
+        delta: { type: number }
+  responses:
+    Problem:
+      description: Error
+      content:
+        application/problem+json:
+          schema: { $ref: '#/components/schemas/Problem' }
+paths:
+  /auth/setup:
+    post:
+      operationId: authSetup
+      security: []
+      requestBody:
+        required: true
+        content: { application/json: { schema: { $ref: '#/components/schemas/SetupRequest' } } }
+      responses:
+        '201': { description: Created, content: { application/json: { schema: { $ref: '#/components/schemas/User' } } } }
+        '409': { $ref: '#/components/responses/Problem' }
+  /auth/login:
+    post:
+      operationId: authLogin
+      security: []
+      requestBody:
+        required: true
+        content: { application/json: { schema: { $ref: '#/components/schemas/Credentials' } } }
+      responses:
+        '200': { description: OK, content: { application/json: { schema: { $ref: '#/components/schemas/User' } } } }
+        '403': { $ref: '#/components/responses/Problem' }
+  /auth/logout:
+    post:
+      operationId: authLogout
+      responses:
+        '204': { description: Logged out }
+  /auth/me:
+    get:
+      operationId: authMe
+      responses:
+        '200': { description: OK, content: { application/json: { schema: { $ref: '#/components/schemas/User' } } } }
+        '401': { $ref: '#/components/responses/Problem' }
+  /auth/register:
+    post:
+      operationId: authRegister
+      security: []
+      requestBody:
+        required: true
+        content: { application/json: { schema: { $ref: '#/components/schemas/RegisterRequest' } } }
+      responses:
+        '201': { description: Created, content: { application/json: { schema: { $ref: '#/components/schemas/User' } } } }
+        '422': { $ref: '#/components/responses/Problem' }
+  /auth/password:
+    post:
+      operationId: authChangePassword
+      requestBody:
+        required: true
+        content: { application/json: { schema: { $ref: '#/components/schemas/ChangePasswordRequest' } } }
+      responses:
+        '204': { description: "Changed. All sessions invalidated." }
+  /auth/status:
+    get:
+      operationId: authStatus
+      security: []
+      responses:
+        '200':
+          description: Whether setup has run
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [needsSetup]
+                properties:
+                  needsSetup: { type: boolean }
+  /invites:
+    get:
+      operationId: listInvites
+      responses:
+        '200': { description: OK, content: { application/json: { schema: { type: array, items: { $ref: '#/components/schemas/Invite' } } } } }
+    post:
+      operationId: createInvite
+      requestBody:
+        content: { application/json: { schema: { $ref: '#/components/schemas/InviteCreate' } } }
+      responses:
+        '201': { description: Created, content: { application/json: { schema: { $ref: '#/components/schemas/Invite' } } } }
+  /invites/{id}/revoke:
+    post:
+      operationId: revokeInvite
+      parameters: [{ name: id, in: path, required: true, schema: { type: string, format: uuid } }]
+      responses:
+        '200': { description: OK, content: { application/json: { schema: { $ref: '#/components/schemas/Invite' } } } }
+  /invites/preview/{token}:
+    get:
+      operationId: previewInvite
+      security: []
+      parameters: [{ name: token, in: path, required: true, schema: { type: string } }]
+      responses:
+        '200': { description: OK, content: { application/json: { schema: { $ref: '#/components/schemas/InvitePreview' } } } }
+  /members:
+    get:
+      operationId: listMembers
+      responses:
+        '200': { description: OK, content: { application/json: { schema: { type: array, items: { $ref: '#/components/schemas/User' } } } } }
+  /vessels:
+    get:
+      operationId: listVessels
+      security: [{ session: [] }, { device: [] }]
+      responses:
+        '200': { description: OK, content: { application/json: { schema: { type: array, items: { $ref: '#/components/schemas/Vessel' } } } } }
+    post:
+      operationId: createVessel
+      requestBody:
+        required: true
+        content: { application/json: { schema: { $ref: '#/components/schemas/VesselInput' } } }
+      responses:
+        '201': { description: Created, content: { application/json: { schema: { $ref: '#/components/schemas/Vessel' } } } }
+  /vessels/{id}:
+    parameters: [{ name: id, in: path, required: true, schema: { type: string, format: uuid } }]
+    put:
+      operationId: updateVessel
+      requestBody:
+        required: true
+        content: { application/json: { schema: { $ref: '#/components/schemas/VesselInput' } } }
+      responses:
+        '200': { description: OK, content: { application/json: { schema: { $ref: '#/components/schemas/Vessel' } } } }
+    delete:
+      operationId: deleteVessel
+      responses:
+        '204': { description: Deleted }
+        '409': { $ref: '#/components/responses/Problem' }
+  /ingredients:
+    post:
+      operationId: createIngredient
+      requestBody:
+        required: true
+        content: { application/json: { schema: { $ref: '#/components/schemas/IngredientInput' } } }
+      responses:
+        '201': { description: Created, content: { application/json: { schema: { $ref: '#/components/schemas/Ingredient' } } } }
+  /inventory:
+    get:
+      operationId: listInventory
+      responses:
+        '200': { description: OK, content: { application/json: { schema: { type: array, items: { $ref: '#/components/schemas/InventoryRow' } } } } }
+  /inventory/{ingredientId}/adjust:
+    post:
+      operationId: adjustStock
+      parameters: [{ name: ingredientId, in: path, required: true, schema: { type: string, format: uuid } }]
+      requestBody:
+        required: true
+        content: { application/json: { schema: { $ref: '#/components/schemas/StockAdjust' } } }
+      responses:
+        '200':
+          description: New stock level
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [stock]
+                properties:
+                  stock: { type: number }
