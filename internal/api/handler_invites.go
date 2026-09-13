@@ -1,6 +1,7 @@
 package api
 
 import (
+	"errors"
 	"net/http"
 	"time"
 
@@ -8,6 +9,7 @@ import (
 	openapi_types "github.com/oapi-codegen/runtime/types"
 
 	"github.com/ayosage/cellarkeep-server/internal/auth"
+	"github.com/ayosage/cellarkeep-server/internal/domain"
 	"github.com/ayosage/cellarkeep-server/internal/store/gen"
 )
 
@@ -76,6 +78,12 @@ func (h *Handlers) RevokeInvite(w http.ResponseWriter, r *http.Request, id opena
 func (h *Handlers) PreviewInvite(w http.ResponseWriter, r *http.Request, token string) {
 	inv, err := h.invites.FindValid(r.Context(), token, time.Now())
 	if err != nil {
+		// The answer is the same either way, so a database failure here looks
+		// like a bad token to the caller. Log it so it does not look like one
+		// to the operator. The token itself is never logged.
+		if !errors.Is(err, domain.ErrNotFound) {
+			h.d.Log.Warn("invite preview failed", "err", err)
+		}
 		writeJSON(w, http.StatusOK, InvitePreview{Valid: false})
 		return
 	}

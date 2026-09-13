@@ -1,19 +1,23 @@
 package api
 
 import (
+	"errors"
 	"net"
 	"net/http"
 	"strings"
 	"time"
+
+	"github.com/jackc/pgx/v5"
 
 	"github.com/ayosage/cellarkeep-server/internal/auth"
 	"github.com/ayosage/cellarkeep-server/internal/domain"
 	"github.com/ayosage/cellarkeep-server/internal/store/gen"
 )
 
-// loginLimiter is process wide on purpose: one cellar, one process, and the
-// window has to outlive a single request.
-var loginLimiter = auth.NewLimiter(10, 15*time.Minute)
+// maxEmailKey caps the per-account limiter key. An address longer than the
+// RFC 5321 maximum is not a real account, and an uncapped key lets a caller
+// choose how much memory each attempt costs.
+const maxEmailKey = 254
 
 // clientIP drops the ephemeral port so the limiter counts a host, not a
 // connection.
@@ -23,6 +27,15 @@ func clientIP(r *http.Request) string {
 		return r.RemoteAddr
 	}
 	return host
+}
+
+// emailKey normalises an address into a limiter key of bounded size.
+func emailKey(email string) string {
+	k := strings.ToLower(strings.TrimSpace(email))
+	if len(k) > maxEmailKey {
+		k = k[:maxEmailKey]
+	}
+	return k
 }
 
 func userJSON(u gen.User) User {
@@ -72,11 +85,15 @@ func (h *Handlers) AuthLogin(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	ip := clientIP(r)
-	// Both counters are consumed on every attempt, so a spray across many
-	// addresses still trips the per-account limit.
-	ipOK := loginLimiter.Allow(ip)
-	emailOK := loginLimiter.Allow("email:" + strings.ToLower(strings.TrimSpace(in.Email)))
-	if !ipOK || !emailOK {
+	// The address is checked first and on its own. Counting the account key
+	// for an address that is already blocked would let a spray of invented
+	// addresses fill the limiter's map for free.
+	if !h.logins.Allow(ip) {
+		h.d.Log.Warn("login rate limited", "ip", ip)
+		writeProblem(w, http.StatusTooManyRequests, "too many attempts", "try again in 15 minutes")
+		return
+	}
+	if !h.logins.Allow("email:" + emailKey(in.Email)) {
 		h.d.Log.Warn("login rate limited", "ip", ip)
 		writeProblem(w, http.StatusTooManyRequests, "too many attempts", "try again in 15 minutes")
 		return
@@ -107,8 +124,12 @@ func (h *Handlers) AuthLogout(w http.ResponseWriter, r *http.Request) {
 func (h *Handlers) AuthMe(w http.ResponseWriter, r *http.Request) {
 	p, _ := auth.FromContext(r.Context())
 	u, err := h.d.Store.Q.GetUser(r.Context(), p.UserID)
-	if err != nil {
+	if errors.Is(err, pgx.ErrNoRows) {
 		h.writeErr(w, domain.ErrNotFound)
+		return
+	}
+	if err != nil {
+		h.writeErr(w, err)
 		return
 	}
 	writeJSON(w, http.StatusOK, userJSON(u))

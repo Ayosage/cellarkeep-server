@@ -1,6 +1,7 @@
 package api_test
 
 import (
+	"encoding/json"
 	"net/http"
 	"strings"
 	"testing"
@@ -111,5 +112,59 @@ func TestInviteFlow(t *testing.T) {
 	decodeInto(t, res, &prev)
 	if prev["valid"] != false {
 		t.Fatalf("preview after use: %+v", prev)
+	}
+}
+
+// TestServedSpecIsTheAuthoredContract guards against serving the generator's
+// rewritten copy, which renames every operation to its Go name.
+func TestServedSpecIsTheAuthoredContract(t *testing.T) {
+	ts := newTestServer(t)
+	res := ts.do(t, "GET", "/openapi.json", nil)
+	if res.StatusCode != http.StatusOK {
+		t.Fatalf("openapi.json: %d", res.StatusCode)
+	}
+	var spec struct {
+		OpenAPI string                     `json:"openapi"`
+		Paths   map[string]json.RawMessage `json:"paths"`
+	}
+	decodeInto(t, res, &spec)
+	if spec.OpenAPI != "3.1.0" {
+		t.Fatalf("openapi %q", spec.OpenAPI)
+	}
+	var setup struct {
+		Post struct {
+			OperationID string `json:"operationId"`
+		} `json:"post"`
+	}
+	if err := json.Unmarshal(spec.Paths["/auth/setup"], &setup); err != nil {
+		t.Fatal(err)
+	}
+	if setup.Post.OperationID != "authSetup" {
+		t.Fatalf("operationId %q, want authSetup", setup.Post.OperationID)
+	}
+}
+
+func TestInvalidPathParamIsProblemJSON(t *testing.T) {
+	ts := newTestServer(t)
+	setupAdmin(t, ts)
+	// The contract declares no GET on /vessels/{id}, so this uses DELETE,
+	// which does reach the generated wrapper's parameter binding.
+	res := ts.do(t, "DELETE", "/vessels/not-a-uuid", nil)
+	if res.StatusCode != http.StatusBadRequest {
+		t.Fatalf("status %d, want 400", res.StatusCode)
+	}
+	if ct := res.Header.Get("Content-Type"); ct != "application/problem+json" {
+		t.Fatalf("content type %q", ct)
+	}
+}
+
+func TestOversizedBodyIsRejected(t *testing.T) {
+	ts := newTestServer(t)
+	setupAdmin(t, ts)
+	res := ts.do(t, "POST", "/vessels", map[string]any{
+		"name": "A", "kind": "tank", "capacityL": 1, "notes": strings.Repeat("a", 2<<20),
+	})
+	if res.StatusCode != http.StatusRequestEntityTooLarge {
+		t.Fatalf("status %d, want 413", res.StatusCode)
 	}
 }

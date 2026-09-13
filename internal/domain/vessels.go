@@ -2,8 +2,10 @@ package domain
 
 import (
 	"context"
+	"errors"
 
 	"github.com/google/uuid"
+	"github.com/jackc/pgx/v5"
 
 	"github.com/ayosage/cellarkeep-server/internal/store"
 	"github.com/ayosage/cellarkeep-server/internal/store/gen"
@@ -61,8 +63,11 @@ func (v Vessels) Create(ctx context.Context, p gen.CreateVesselParams) (gen.Vess
 
 func (v Vessels) Update(ctx context.Context, p gen.UpdateVesselParams) (gen.Vessel, error) {
 	row, err := v.S.Q.UpdateVessel(ctx, p)
-	if err != nil {
+	if errors.Is(err, pgx.ErrNoRows) {
 		return gen.Vessel{}, ErrNotFound
+	}
+	if err != nil {
+		return gen.Vessel{}, err
 	}
 	return row, nil
 }

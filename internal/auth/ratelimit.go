@@ -40,3 +40,12 @@ func (l *Limiter) Allow(key string) bool {
 	l.hits[key] = e
 	return true
 }
+
+// Len reports how many keys the limiter is tracking. Callers use it to watch
+// the map for growth, since every distinct key holds memory until its window
+// expires and is reused.
+func (l *Limiter) Len() int {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	return len(l.hits)
+}
