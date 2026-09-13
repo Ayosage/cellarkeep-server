@@ -51,6 +51,9 @@ func StampSchedule(steps []StepInput, start Day) []StampedEvent {
 func round3(n float64) float64 { return math.Round(n*1000) / 1000 }
 
 func ScaleQty(qtyPerBase, baseVolumeL, actualVolumeL float64) float64 {
+	if baseVolumeL <= 0 {
+		return 0
+	}
 	return round3(qtyPerBase * actualVolumeL / baseVolumeL)
 }
 
@@ -61,6 +64,7 @@ type ShiftableEvent struct {
 	Anchor        *Anchor
 	OffsetDays    *int
 	ScheduledDate *Day
+	CompletedDate *Day
 }
 
 type DateChange struct {
@@ -69,8 +73,14 @@ type DateChange struct {
 }
 
 // ShiftAfterCompletion reflows downstream planned PREV-anchored events from the
-// actual completion date. START-anchored events keep their date but restart the
-// chain. Freeform events (nil anchor) and non-planned events are never moved.
+// actual completion date. Freeform events (nil anchor) are never moved and do
+// not affect the chain. A skipped event is never moved and does not affect the
+// chain either. A done event does not move, but its actual date (CompletedDate,
+// falling back to ScheduledDate) becomes the new chain so later PREV-anchored
+// events reflow from what actually happened, not from the plan. A planned
+// START-anchored event keeps its date but restarts the chain from it. A planned
+// PREV-anchored event's date becomes chain + offset, reported as a change when
+// it differs from its current ScheduledDate.
 func ShiftAfterCompletion(events []ShiftableEvent, completedSortIndex int, completedDate Day) []DateChange {
 	var downstream []ShiftableEvent
 	for _, e := range events {
@@ -82,23 +92,35 @@ func ShiftAfterCompletion(events []ShiftableEvent, completedSortIndex int, compl
 	chain := completedDate
 	changes := []DateChange{}
 	for _, e := range downstream {
-		if e.Anchor == nil || e.Status != "planned" {
+		if e.Anchor == nil {
 			continue
 		}
-		if *e.Anchor == AnchorStart {
-			if e.ScheduledDate != nil {
+		switch e.Status {
+		case "done":
+			switch {
+			case e.CompletedDate != nil:
+				chain = *e.CompletedDate
+			case e.ScheduledDate != nil:
 				chain = *e.ScheduledDate
 			}
-			continue
-		}
-		off := 0
-		if e.OffsetDays != nil {
-			off = *e.OffsetDays
-		}
-		next := chain.Add(off)
-		chain = next
-		if e.ScheduledDate == nil || *e.ScheduledDate != next {
-			changes = append(changes, DateChange{ID: e.ID, ScheduledDate: next})
+		case "skipped":
+			// chain unchanged
+		case "planned":
+			if *e.Anchor == AnchorStart {
+				if e.ScheduledDate != nil {
+					chain = *e.ScheduledDate
+				}
+				continue
+			}
+			off := 0
+			if e.OffsetDays != nil {
+				off = *e.OffsetDays
+			}
+			next := chain.Add(off)
+			chain = next
+			if e.ScheduledDate == nil || *e.ScheduledDate != next {
+				changes = append(changes, DateChange{ID: e.ID, ScheduledDate: next})
+			}
 		}
 	}
 	return changes

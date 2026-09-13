@@ -1,6 +1,9 @@
 package domain
 
-import "fmt"
+import (
+	"fmt"
+	"sort"
+)
 
 type EventType string
 
@@ -46,13 +49,21 @@ var eventRules = map[EventType]map[string]fieldRule{
 
 // ValidateEventData checks a payload against the rules for its event type and
 // returns a copy with unknown keys removed. A min of 0 means strictly positive.
+// Rule keys are checked in sorted order so the reported field on multiple
+// invalid fields is deterministic.
 func ValidateEventData(t EventType, data map[string]any) (map[string]any, error) {
 	rules, ok := eventRules[t]
 	if !ok {
 		return nil, invalid("type", fmt.Sprintf("unknown event type %q", t))
 	}
+	keys := make([]string, 0, len(rules))
+	for key := range rules {
+		keys = append(keys, key)
+	}
+	sort.Strings(keys)
 	out := map[string]any{}
-	for key, rule := range rules {
+	for _, key := range keys {
+		rule := rules[key]
 		v, present := data[key]
 		if !present || v == nil {
 			if rule.required {

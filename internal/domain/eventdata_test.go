@@ -31,6 +31,20 @@ func TestBottlingRequiresCountAndSize(t *testing.T) {
 	}
 }
 
+func TestValidateEventDataReportsFirstMissingFieldDeterministically(t *testing.T) {
+	_, err := ValidateEventData(EventAddition, map[string]any{"label": "x"})
+	if err == nil {
+		t.Fatal("want error")
+	}
+	ve, ok := err.(*ValidationError)
+	if !ok {
+		t.Fatalf("want *ValidationError, got %T", err)
+	}
+	if ve.Field != "ingredientId" {
+		t.Fatalf("got field %q, want ingredientId", ve.Field)
+	}
+}
+
 func TestMeasurementPayloadHoldsOnlyLabel(t *testing.T) {
 	out, err := ValidateEventData(EventMeasurement, map[string]any{"label": "Day 3", "gravity": 1.05})
 	if err != nil {

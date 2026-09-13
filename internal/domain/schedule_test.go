@@ -69,9 +69,29 @@ func TestShiftSkipsDoneSkippedAndFreeform(t *testing.T) {
 	}
 }
 
+func TestShiftAfterCompletionUsesDoneEventActualDate(t *testing.T) {
+	id := ids(2)
+	prev := AnchorPrevious
+	two := 2
+	doneDate := Day("2026-09-20")
+	plannedDate := Day("2026-09-05")
+	evs := []ShiftableEvent{
+		{ID: id[0], SortIndex: 3, Status: "done", Anchor: &prev, CompletedDate: &doneDate},
+		{ID: id[1], SortIndex: 4, Status: "planned", Anchor: &prev, OffsetDays: &two, ScheduledDate: &plannedDate},
+	}
+	got := ShiftAfterCompletion(evs, 2, Day("2026-09-10"))
+	want := []DateChange{{ID: id[1], ScheduledDate: "2026-09-22"}}
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("got %v want %v", got, want)
+	}
+}
+
 func TestScaleQty(t *testing.T) {
 	if got := ScaleQty(5.4, 19, 11); got != 3.126 {
 		t.Fatalf("got %v", got)
+	}
+	if got := ScaleQty(5, 0, 10); got != 0 {
+		t.Fatalf("got %v want 0 for non-positive base volume", got)
 	}
 }
 
