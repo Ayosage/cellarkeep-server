@@ -15,6 +15,7 @@ import (
 
 	"github.com/ayosage/cellarkeep-server/internal/api"
 	"github.com/ayosage/cellarkeep-server/internal/config"
+	"github.com/ayosage/cellarkeep-server/internal/migrations"
 )
 
 func main() {
@@ -28,6 +29,8 @@ func main() {
 	switch os.Args[1] {
 	case "serve":
 		err = serve(log)
+	case "migrate":
+		err = migrate(log)
 	default:
 		err = fmt.Errorf("unknown command %q", os.Args[1])
 	}
@@ -49,6 +52,10 @@ func serve(log *slog.Logger) error {
 		return err
 	}
 	defer pool.Close()
+	if err := migrations.Up(ctx, pool); err != nil {
+		return err
+	}
+	log.Info("migrated")
 	srv := &http.Server{
 		Addr:              cfg.Addr,
 		Handler:           api.NewRouter(api.Deps{DB: pool}),
@@ -67,5 +74,23 @@ func serve(log *slog.Logger) error {
 	if err := srv.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
 		return err
 	}
+	return nil
+}
+
+func migrate(log *slog.Logger) error {
+	cfg, err := config.Load(os.Getenv)
+	if err != nil {
+		return err
+	}
+	ctx := context.Background()
+	pool, err := pgxpool.New(ctx, cfg.DatabaseURL)
+	if err != nil {
+		return err
+	}
+	defer pool.Close()
+	if err := migrations.Up(ctx, pool); err != nil {
+		return err
+	}
+	log.Info("migrated")
 	return nil
 }
