@@ -1,3 +1,6 @@
+-- name: LockSetup :exec
+select pg_advisory_xact_lock(7241);
+
 -- name: CountUsers :one
 select count(*) from users;
 

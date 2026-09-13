@@ -25,6 +25,13 @@ func normEmail(e string) string { return strings.ToLower(strings.TrimSpace(e)) }
 func (u Users) Setup(ctx context.Context, email, name, password string) (gen.User, error) {
 	var out gen.User
 	err := u.S.WithTx(ctx, func(q *gen.Queries) error {
+		// Serialise first-setup attempts. Without this, two concurrent
+		// requests both read a count of zero under READ COMMITTED and both
+		// create an admin. The lock is transaction scoped, so it releases on
+		// commit or rollback.
+		if err := q.LockSetup(ctx); err != nil {
+			return err
+		}
 		n, err := q.CountUsers(ctx)
 		if err != nil {
 			return err
@@ -44,13 +51,28 @@ func (u Users) Setup(ctx context.Context, email, name, password string) (gen.Use
 	return out, err
 }
 
-// Login always runs the hash check so timing does not reveal whether the
-// email exists. Any failure is ErrForbidden.
+// decoyHash stands in for the password hash of an address that has no user.
+// It is computed once at startup so that the unknown-email path costs the
+// same one argon2id verification as the known-email path. Hashing it per
+// request would make unknown addresses take roughly twice as long and leak
+// which addresses are registered.
+var decoyHash = mustHash("decoy-so-verify-still-runs")
+
+func mustHash(pw string) string {
+	h, err := auth.HashPassword(pw)
+	if err != nil {
+		panic("domain: cannot hash decoy password: " + err.Error())
+	}
+	return h
+}
+
+// Login always runs exactly one hash check so timing does not reveal whether
+// the email exists. Any failure is ErrForbidden.
 func (u Users) Login(ctx context.Context, email, password string) (gen.User, error) {
 	user, err := u.S.Q.GetUserByEmail(ctx, normEmail(email))
 	hash := user.PasswordHash
 	if err != nil {
-		hash, _ = auth.HashPassword("decoy-so-verify-still-runs")
+		hash = decoyHash
 	}
 	ok, _ := auth.VerifyPassword(hash, password)
 	if err != nil || !ok {

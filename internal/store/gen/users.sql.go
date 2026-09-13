@@ -127,6 +127,15 @@ func (q *Queries) ListUsers(ctx context.Context) ([]ListUsersRow, error) {
 	return items, nil
 }
 
+const lockSetup = `-- name: LockSetup :exec
+select pg_advisory_xact_lock(7241)
+`
+
+func (q *Queries) LockSetup(ctx context.Context) error {
+	_, err := q.db.Exec(ctx, lockSetup)
+	return err
+}
+
 const updateUserPassword = `-- name: UpdateUserPassword :exec
 update users set password_hash = $2 where id = $1
 `

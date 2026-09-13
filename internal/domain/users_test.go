@@ -3,6 +3,8 @@ package domain_test
 import (
 	"context"
 	"errors"
+	"fmt"
+	"sync"
 	"testing"
 	"time"
 
@@ -52,9 +54,67 @@ func TestSetupOnceThenInviteOnly(t *testing.T) {
 func TestExpiredInviteIsInvalid(t *testing.T) {
 	ctx := context.Background()
 	s := txStore(t)
-	admin, _ := domain.Users{S: s}.Setup(ctx, "a@x.com", "A", "passwordpassword")
-	inv, _ := domain.Invites{S: s}.Create(ctx, admin.ID, nil, time.Now().Add(-8*24*time.Hour))
+	admin, err := domain.Users{S: s}.Setup(ctx, "a@x.com", "A", "passwordpassword")
+	if err != nil {
+		t.Fatal(err)
+	}
+	inv, err := domain.Invites{S: s}.Create(ctx, admin.ID, nil, time.Now().Add(-8*24*time.Hour))
+	if err != nil {
+		t.Fatal(err)
+	}
 	if _, err := (domain.Invites{S: s}).FindValid(ctx, inv.Token, time.Now()); !errors.Is(err, domain.ErrNotFound) {
 		t.Fatalf("got %v", err)
+	}
+}
+
+func TestLoginWithUnknownEmailIsForbidden(t *testing.T) {
+	ctx := context.Background()
+	users := domain.Users{S: txStore(t)}
+	if _, err := users.Login(ctx, "nobody@example.com", "passwordpassword"); !errors.Is(err, domain.ErrForbidden) {
+		t.Fatalf("got %v", err)
+	}
+}
+
+// truncate clears the tables this test touches. The concurrency test below
+// needs real committed transactions on separate connections, so it cannot run
+// inside the usual rolled-back test transaction.
+func truncate(t *testing.T, s *store.Store) {
+	t.Helper()
+	if _, err := s.Pool.Exec(context.Background(), "truncate users cascade"); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestConcurrentSetupHasOneWinner(t *testing.T) {
+	ctx := context.Background()
+	s := testdb.Open(t)
+	truncate(t, s)
+	t.Cleanup(func() { truncate(t, s) })
+
+	users := domain.Users{S: s}
+	errs := make([]error, 2)
+	var wg sync.WaitGroup
+	wg.Add(len(errs))
+	for i := range errs {
+		go func() {
+			defer wg.Done()
+			_, errs[i] = users.Setup(ctx, fmt.Sprintf("admin%d@x.com", i), "A", "passwordpassword")
+		}()
+	}
+	wg.Wait()
+
+	var won, conflicted int
+	for _, err := range errs {
+		switch {
+		case err == nil:
+			won++
+		case errors.Is(err, domain.ErrConflict):
+			conflicted++
+		default:
+			t.Fatalf("unexpected error: %v", err)
+		}
+	}
+	if won != 1 || conflicted != 1 {
+		t.Fatalf("want exactly one winner and one conflict, got %d and %d", won, conflicted)
 	}
 }
